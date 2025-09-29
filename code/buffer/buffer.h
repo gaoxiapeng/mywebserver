@@ -30,7 +30,7 @@ public:
     std::string RetrieveAllToStr();      // 提取所有数据并转为string
 
     // 数据写入操作 
-    void EnsureWriteable(size_t len);    // 确保至少有len字节可写空间
+    void EnsureWriteable(size_t len);    // 判断是否需要扩容
     void HasWritten(size_t len);         // 标记已写入len字节
     const char* BeginWriteConst() const; // 可写区域起始指针（const）
     char* BeginWrite();                  // 可写区域起始指针
