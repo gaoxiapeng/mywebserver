@@ -22,7 +22,7 @@ void Buffer::Retrieve(size_t len) {         // 已读len，移动readPos_
     assert(len <= ReadableBytes());
     readPos_ += len;
 }
-void Buffer::RetrieveUntil(const char* end) {  // 将readPos_移到末尾
+void Buffer::RetrieveUntil(const char* end) {  // 将readPos_移到指定位置
     assert(Peek() <= end);
     Retrieve(end - Peek());
 }
@@ -95,7 +95,7 @@ ssize_t Buffer::ReadFd(int fd, int* saveErrno) {
     iov[1].iov_base = buff;
     iov[1].iov_len = sizeof(buff);
 
-    // 分散读（会自动写入，只需要改变指针即可）
+    // 分散读（会自动写入，后续只需要改变指针即可）
     const ssize_t len = readv(fd, iov, 2);
     if(len < 0) {
         *saveErrno = errno;
@@ -136,7 +136,7 @@ void Buffer::MakeSpace_(size_t len) {
         buffer_.resize(writePos_ + len + 1);
     }
     else {
-        size_t reaSize = ReadableBytes();
+        size_t readSize = ReadableBytes();
         std::copy(BeginPtr_() + readPos_, BeginPtr_() + writePos_, BeginPtr_());
         readPos_ = 0;
         writePos_ = readPos_ + readSize;
