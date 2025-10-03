@@ -52,7 +52,7 @@ private:
     void MakeSpace_(size_t len);        // 扩容或搬移数据以腾出空间
 
     // 成员变量 
-    // 模板参数中，必须使用完全限定名称（即需要std::）
+    // 模板参数中，必须使用完全限定名称（即需要std::）; char不是模板参数，而size_t是模板参数
     std::vector<char> buffer_;          // 底层存储
     std::atomic<std::size_t> readPos_;  // 读指针（原子操作）
     std::atomic<std::size_t> writePos_; // 写指针（原子操作）
