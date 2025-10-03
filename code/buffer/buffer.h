@@ -7,7 +7,7 @@
 #include <cstring>
 #include <iostream>
 #include <unistd.h>  // write, read
-#indlude <sys/uio.h> // readv
+#include <sys/uio.h> // readv
 #include <vector>
 #include <atomic>
 #include <assert.h>
@@ -15,7 +15,7 @@
 class Buffer{
 public:
     Buffer(int initBuffSize = 1024);
-    ~Buffer() = defalt;
+    ~Buffer() = default;
 
     // 容量查询
     size_t WritableBytes() const;       // 可写空间大小
