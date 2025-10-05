@@ -58,10 +58,10 @@ public:
 
     // write()：同步模式下写入文件，异步模式下写入阻塞队列
     void write(int level, const char* format,...);
+    // 后台线程：从内存队列取出日志，批量写入磁盘（仅异步模式需要）——持续执行
+    static void FlushLogThread();   
     // 从队列取日志写入文件(磁盘)——立即执行(由关键日志调用，如错误日志)
     void flush();   
-    // 把积压的日志写到磁盘——持续运行的后台线程
-    static void FlushLogThread();   
 
     // 动态调整要记录哪些级别的日志
     int GetLevel();     

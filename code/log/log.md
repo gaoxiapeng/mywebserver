@@ -109,4 +109,5 @@ AbstractBase::~AbstractBase() {} // 必须提供实现
 4. 纯虚析构函数使类抽象化同时保证析构安全
 
 
-![Alt text](image.png)
+# 日志
+![Alt text](~Log_Asy.png)

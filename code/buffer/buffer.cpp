@@ -40,6 +40,12 @@ std::string Buffer::RetrieveAllToStr() {    // 提取缓冲区可读部分并清
 }
 
 /* write部分 */
+char* Buffer::BeginWrite() {
+    return BeginPtr_() + writePos_;
+}
+const char* Buffer::BeginWriteConst() const {
+    return BeginPtr_() + writePos_;
+}
 // 这里将检查和写入拆开了（和读不一样，读只有一个Retrieve），这是因为写需要扩容
 void Buffer::EnsureWriteable(size_t len) {  // 判断是否需要扩容
     if(WritableBytes() < len) {
@@ -49,12 +55,6 @@ void Buffer::EnsureWriteable(size_t len) {  // 判断是否需要扩容
 }
 void Buffer::HasWritten(size_t len) {
     writePos_ += len;
-}
-const char* Buffer::BeginWriteConst() const {
-    return BeginPtr_() + writePos_;
-}
-char* Buffer::BeginWrite() {
-    return BeginPtr_() + writePos_;
 }
 
 /* 数据追加 —— 针对不同输入类型 */
@@ -75,12 +75,12 @@ void Buffer::Append(const void* data, size_t len) {  // 任意类型的二进制
     Append(static_cast<const char*>(data), len);
 }
 void Buffer::Append(const Buffer& buff) {
-    Append(buff.Peek(), buff.WritableBytes());
+    Append(buff.Peek(), buff.ReadableBytes());
 }
 
 /* I/O操作 */
 ssize_t Buffer::ReadFd(int fd, int* saveErrno) {
-    char buff[65535];
+    char buff[65535];   // 只是临时栈，最终需要拷贝到buffer_内
     /*
     struct iovec {
         void  *iov_base;  // 缓冲区起始地址
@@ -101,7 +101,7 @@ ssize_t Buffer::ReadFd(int fd, int* saveErrno) {
         *saveErrno = errno;
     } 
     else if(static_cast<size_t>(len) <= writeSize) {
-        writePos_ += len;
+        HasWritten(static_cast<size_t>(len));
     }
     else {
         writePos_ = buffer_.size();
