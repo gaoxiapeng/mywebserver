@@ -36,8 +36,8 @@ public:
     char* BeginWrite();                  // 可写区域起始指针
 
     // 数据追加（Append） 
-    void Append(const std::string& str);       // 追加string
     void Append(const char* str, size_t len);  // 追加字符数组
+    void Append(const std::string& str);       // 追加string
     void Append(const void* data, size_t len); // 追加二进制数据
     void Append(const Buffer& buff);           // 追加另一个Buffer的数据
 

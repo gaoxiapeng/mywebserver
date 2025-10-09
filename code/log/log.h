@@ -43,7 +43,7 @@ private:
     FILE* fp_;      // 日志文件指针，缓冲多条日志(写入磁盘前都需要先写入FILE*缓冲区)
 
 // 异步日志
-// unique_ptr:智能指针，​​独占所有权​​地管理动态分配的对象，确保该对象​​同一时间只能被一个指针拥有
+// unique_ptr:智能指针，​​独占所有权​​地管理动态分配的对象，确保该对象​​同一时间只能被一个指针拥有(RAII机制)
 // 会自动释放内存，无需手动delete，确保阻塞队列和写线程的生命周期和日志实例一致
 // 这里的成员都是指针类型的
     std::unique_ptr<BlockDeque<std::string>> deque_;  // 阻塞队列(日志内容存放位置)
@@ -72,5 +72,20 @@ public:
     }
 
 };
+
+#define LOG_BASE(level, format, ...) \
+    do {\
+        Log* log = Log::Instance();\
+        if (log->IsOpen() && log->GetLevel() <= level) {\
+            log->write(level, format, ##__VA_ARGS__); \
+            log->flush();\
+        }\
+    } while(0);
+
+#define LOG_DEBUG(format, ...) do {LOG_BASE(0, format, ##__VA_ARGS__)} while(0);
+#define LOG_INFO(format, ...) do {LOG_BASE(1, format, ##__VA_ARGS__)} while(0);
+#define LOG_WARN(format, ...) do {LOG_BASE(2, format, ##__VA_ARGS__)} while(0);
+#define LOG_ERROR(format, ...) do {LOG_BASE(3, format, ##__VA_ARGS__)} while(0);
+
 
 #endif
