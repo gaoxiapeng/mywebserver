@@ -48,7 +48,7 @@ public:
 
     // 析构的流程是：关闭pool_后，改变标识符，唤醒所阻塞线程(else pool->cond.wait(locker))，再检查else函数后break
     ~ThreadPool() {
-        if(static_cast<bool>(pool_)) {
+        if(pool_) {
             std::lock_guard<std::mutex> locker(pool_->mtx);
             pool_->isClosed = false;
         }
@@ -59,10 +59,10 @@ public:
 
     /*
     F&& task是一个通用引用(C++11特性)，用于实现完美转发
-    传入左值，自动推到为左值引用(F&)
+    传入左值，自动推导为左值引用(F&)
     传入右值(临时对象-返回值；字面量-int x = 1, 这里的1；move转换结果； Lambda表达式)，自动推导为右值引用(F&&)
 
-    move：移动语义，高效转移资源，避免拷贝   int a = 1;  int b = move(a) ——> 此时a被销毁
+    move：移动语义，高效转移资源，避免拷贝   int a = 1;  int b = move(a) ——> a本是左值，但被move转为右值了
     forward：完美转发，保持参数的左值/右值的原有属性
     */
     template<class F>
@@ -80,7 +80,7 @@ private:
         bool isClosed;
         std::mutex mtx;
         std::condition_variable cond;
-        std::queue<std::function<void()>> tasks;   // 任务是无参数、无返回的
+        std::queue<std::function<void()>> tasks;   // 任务是无参数、无返回的可调用对象
     };
     /*
     管理线程池的共享状态（Pool结构体）

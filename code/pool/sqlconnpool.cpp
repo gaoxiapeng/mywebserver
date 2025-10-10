@@ -49,3 +49,26 @@ MYSQL* SqlConnPool::GetConn() {
     }
     return sql;
 }
+
+void SqlConnPool::FreeConn(MYSQL* sql) {
+    assert(sql);
+    std::lock_guard<std::mutex> locker(mtx_);
+    connQue_.push(sql);
+    // 增加信号量的值，并唤醒等待该信号量的一个线程(sem_wait)
+    sem_post(&semId_);
+}
+
+void SqlConnPool::ClosePool() {
+    std::lock_guard<std::mutex> locker(mtx_);
+    while(!connQue_.empty()) {
+        MYSQL* item = connQue_.front();
+        connQue_.pop();
+        mysql_close(item);
+    }
+    mysql_library_end();
+}
+
+int SqlConnPool::GetFreeConnCount() {
+    std::lock_guard<std::mutex> locker(mtx_);
+    return connQue_.size();
+}
