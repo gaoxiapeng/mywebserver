@@ -3,7 +3,7 @@
 // 默认HTTP页面集合，用于路径补全
 const std::unordered_set<std::string> HttpRequest::DEFAULT_HTML {
     "/index", "/welcome", "/video", "/picture",
-    "/register", "login",
+    "/register", "/login",
 };
 // /register和/login需要区分注册和登记的业务逻辑，其余只需要补全路径
 const std::unordered_map<std::string, int> HttpRequest::DEFAULT_HTML_TAG {
@@ -28,14 +28,11 @@ bool HttpRequest::IsKeepAlive() const {
 /* 一个POST方法的请求报文
 POST /api/user HTTP/1.1         // 请求行
 Host: example.com               // 请求头
-Content-Type: application/json
+Connection: keep-alive
+Content-Type: application/x-www-form-urlencoded
 Content-Length: 123
 
-{                               // 请求体
-   "name": "John Doe",
-   "email": "johndoe@example.com",
-   "age": 30
-}
+username=test%20user&password=123%40abc           // 请求体
 */
 bool HttpRequest::parse(Buffer& buff) {
     // 请求报文中，每一行以CRLF-回车换行符为结尾
@@ -138,7 +135,8 @@ void HttpRequest::ParseHeader_(const std::string& line) {
 
 void HttpRequest::ParseBody_(const std::string& line) {
     body_ = line;
-    ParsePost_();   // 解析post参数
+    // 解析POST表单并进行用户验证
+    ParsePost_();   
     state_ = FINISH;
     LOG_DEBUG("Body:%s, len:%s", line.c_str(), line.size());
 }
@@ -154,16 +152,17 @@ int HttpRequest::ConverHex(char ch) {
     return ch;
 }
 
-// 处理POST请求——解析表单数据(处理后的，post_中的)并进行用户验证
+// 处理POST请求——解析表单数据并进行用户验证(如果是POST方法的话)
 void HttpRequest::ParsePost_() {
     if(method_ == "POST" && header_["Connect-Type"] == "application/x-www-form-urlencoded") {
-        // 将POST表单数据映射到post_这一map里
+        // 解析表单数据，映射到post_里
         ParseFromUrlencoded_();  
         if(DEFAULT_HTML_TAG.count(path_)) {
             int tag = DEFAULT_HTML_TAG.find(path_)->second;
             LOG_DEBUG("Tag:%d", tag);
-            if(tag == 0 || tag == 1) {
+            if(tag == 0 || tag == 1) { 
                 bool isLogin = (tag == 1);
+                // 用户验证
                 if(UserVerify(post_["username"], post_["password"], isLogin)) {
                     path_ = "/welcome.html";
                 }
@@ -222,12 +221,85 @@ void HttpRequest::ParseFromUrlencoded_() {
     assert(j <= i);
     if(post_.count(key) == 0 && j < i) {
         value = body_.substr(j, i-j);
-        post_[key] = value;
+         post_[key] = value;
     }
 }
 
+// 注册成功、登录成功都返回true，除此之外都返回false
 bool HttpRequest::UserVerify(const std::string &name, const std::string &pwd, bool isLogin) {
+    if(name == "" || pwd == "") {
+        return false;
+    }
+    LOG_INFO("Verify name:%s, pwd:%s", name.c_str(), pwd.c_str());
+    MYSQL* sql;
+    // RAII技术，且此时的sql是从连接池中get的
+    SqlConnRAII(&sql, SqlConnPool::Instance());
+    assert(sql);
 
+    /*登录时，flag=false，默认登录失败； 注册时，flag=true，默认注册成功*/
+    bool flag = false;
+    MYSQL_RES* res = nullptr;   // 结果集，即整个TABLE内容
+    MYSQL_FIELD* fields = nullptr;   // 字段，即TABLE中的表头
+    unsigned int j = 0;   // 有多少字段，即表头有多少列
+    char order[256] = {0};      // 放MYSQL命令的缓冲区
+
+    if(!isLogin) {   // 注册
+        flag = true;
+    }
+    // 该命令相当于查找TABLE-user中username对应的那一行
+    snprintf(order, 256, "SELECT username, password FROM user WHERE username='%s' LIMIT 1", name.c_str());
+    LOG_DEBUG("SELCET the USER'S info:%s", order);
+
+    // mysql_query()：执行MYSQL命令成功(这里的执行成功不一定代表TABLE中有对应username)返回0，不进入for
+    if(mysql_query(sql, order)) {
+        mysql_free_result(res);  // 释放结果集
+        return false;
+    }
+
+    // 这里的东西都是查询username成功后的信息了
+    res = mysql_store_result(sql);  // 结果集
+    j = mysql_num_fields(res);      // 字段长
+    fields = mysql_fetch_fields(res);  // 字段
+
+    // 进入while，说明row != NULL
+    while(MYSQL_ROW row = mysql_fetch_row(res)) {
+        LOG_DEBUG("username is %s, pwd is %s", row[0], row[1]);
+        std::string password(row[1]);      // 数据库中对应的真实密码
+        // 登录验证
+        if(isLogin) {
+            if(pwd == password) {
+                flag = true;   // 密码验证成功
+            }
+            else {
+                flag = false;
+                LOG_DEBUG("pwd error!");
+            }
+        }
+        else {   // 能进入这个while循环且是注册，证明之前row不为空，代表已经有这个用户名了
+            flag = false;
+            LOG_DEBUG("user used!");
+        }
+    }
+    mysql_free_result(res);
+
+    /*注册行为 且 用户名未被使用*/
+    if(!isLogin && flag == true) {
+        LOG_DEBUG("register!");
+        bzero(order, 256);
+        snprintf(order, 256, "INSERT INTO user(username, password) VALUES('%s','%s')", name.c_str(), pwd.c_str());
+        LOG_DEBUG("Insert command is:%s", order);
+        // 注册命令失败
+        if(mysql_query(sql, order)) {
+            LOG_DEBUG("Insert error!");
+            flag = false;
+        }
+        // 注册成功
+        flag = true;
+    }
+    SqlConnPool::Instance()->FreeConn(sql);
+    LOG_DEBUG("UserVerify success!")
+    /*这里包括的isLogin=true 且 username不存在的情况，直接返回flag=false*/
+    return flag;
 }
 
 
