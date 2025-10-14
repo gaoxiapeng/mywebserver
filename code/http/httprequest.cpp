@@ -46,7 +46,13 @@ bool HttpRequest::parse(Buffer& buff) {
         /*search()：在[buff.Peak, buff.BeginWriteConst)中查找子序列[CRLF, CRLF+2)的第一次出现位置*/
         /*C风格中，char数组末尾以\0为结尾，因此CRLF在buff中表示为\r\n\0，因此lineEnd='\r'*/
         const char* lineEnd = std::search(buff.Peek(), buff.BeginWriteConst(), CRLF, CRLF + 2);
+        // 未找到CRLF，跳出循环，等待下次数据到来
+        if(lineEnd == buff.BeginWrite()) {
+            break;
+        }
+
         std::string line(buff.Peek(), lineEnd);
+
         switch(state_)
         {
         /*
@@ -72,10 +78,6 @@ bool HttpRequest::parse(Buffer& buff) {
         default:
             break;
         }
-        // 未找到CRLF，跳出循环，等待下次数据到来
-        if(lineEnd == buff.BeginWrite()) {
-            break;
-        }
         buff.RetrieveUntil(lineEnd + 2);
     }
     // LOG是C风格函数，无法识别string，只能用c_str()将其转换为const char*
@@ -84,7 +86,7 @@ bool HttpRequest::parse(Buffer& buff) {
 }
 
 /*
-http://www.bilibili.com/，识别到根路径"/"，最终路径变为/index.html
+http://www.bilibili.com/，识别到根路径"/"，最终路径变为/index.html——当用户访问网站根目录时，默认显示首页文件
 http://www.bilibili.com/index，识别到预定义路径"/index"，最终路径为/index.html
 */
 void HttpRequest::ParsePath_() {
@@ -127,9 +129,9 @@ void HttpRequest::ParseHeader_(const std::string& line) {
     if(std::regex_match(line, subMatch, patten)) {
         header_[subMatch[1]] = subMatch[2];
     }
-    // 结合parse来看，
+    // 不成功是因为遇到空行了，代表HEADER部分结束，跳转到BODY
     else {
-        state_ = BODY;     // 遇到空行，代表HEADER部分结束，跳转到BODY
+        state_ = BODY;     
     }
 }
 
@@ -157,6 +159,7 @@ void HttpRequest::ParsePost_() {
     if(method_ == "POST" && header_["Connect-Type"] == "application/x-www-form-urlencoded") {
         // 解析表单数据，映射到post_里
         ParseFromUrlencoded_();  
+        // 解析完表单数据，如果是注册或登记，就进行用户验证
         if(DEFAULT_HTML_TAG.count(path_)) {
             int tag = DEFAULT_HTML_TAG.find(path_)->second;
             LOG_DEBUG("Tag:%d", tag);
@@ -250,7 +253,7 @@ bool HttpRequest::UserVerify(const std::string &name, const std::string &pwd, bo
     snprintf(order, 256, "SELECT username, password FROM user WHERE username='%s' LIMIT 1", name.c_str());
     LOG_DEBUG("SELCET the USER'S info:%s", order);
 
-    // mysql_query()：执行MYSQL命令成功(这里的执行成功不一定代表TABLE中有对应username)返回0，不进入for
+    // mysql_query()：执行MYSQL命令成功(这里的执行成功不一定代表TABLE中有对应username)返回0，不进入while
     if(mysql_query(sql, order)) {
         mysql_free_result(res);  // 释放结果集
         return false;
