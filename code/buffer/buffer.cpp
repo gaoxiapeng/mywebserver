@@ -96,7 +96,7 @@ ssize_t Buffer::ReadFd(int fd, int* saveErrno) {
     iov[1].iov_len = sizeof(buff);
 
     // 分散读（会自动写入，后续只需要改变指针即可）
-    // len是本次readv调用实际读取的字节综述，不一定是fd中所有数据的长度
+    // len是本次readv调用实际从fd中读取的字节总数，=min(iov总长度, fd)
     const ssize_t len = readv(fd, iov, 2);
     if(len < 0) {
         *saveErrno = errno;
