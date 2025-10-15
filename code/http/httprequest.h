@@ -65,13 +65,12 @@ private:
     void ParseHeader_(const std::string& line);
     void ParseBody_(const std::string& line);
 
-    void ParsePath_();    // 处理请求路径
-    void ParsePost_();    // 处理POST请求
-    void ParseFromUrlencoded_();    // 解析URL编码的表单数据
-
-    // 用户验证函数
-    static bool UserVerify(const std::string& name, const std::string& pwd, bool isLogin);
     static int ConverHex(char ch);      // 16进制字符转换为10进制
+    void ParsePath_();    // 处理请求路径
+    void ParsePost_();    // 解析POST表单数据 && 用户验证
+
+    void ParseFromUrlencoded_();    // 解析URL编码的表单数据
+    static bool UserVerify(const std::string& name, const std::string& pwd, bool isLogin);      // 用户验证函数
 
     PARSE_STATE state_;     // 当前解析状态
     std::string method_, path_, version_, body_;

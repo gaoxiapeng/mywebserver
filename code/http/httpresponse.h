@@ -38,8 +38,8 @@ private:
     int code_;
     bool isKeepAlive_;
 
-    std::string path_;
-    std::string srcDir_;
+    std::string srcDir_;    // 服务器根目录
+    std::string path_;      // 请求的相对路径
 
     // 内存映射
     char* mmFile_;

@@ -5,7 +5,7 @@ HTTP/1.1 200 OK                             // 状态行
 Date: Fri, 22 May 2009 06:07:21 GMT         // 响应头
 Connection: keep-alive
 keep-alive: max=6, timeout=120
-Content-Type: text/html; charset=UTF-8
+Content-Type: text/html
 Content-Length: 10
 \r\n
 <html>                                      // 响应正文
@@ -67,6 +67,7 @@ HttpResponse::~HttpResponse() {
     UnmapFile();    // 释放内存映射文件
 }
 
+// 这里的path和ErrorHtml中的path不一样
 void HttpResponse::Init(const std::string& srcDir, std::string& path, bool isKeepAlive, int code) {
     assert(srcDir != "");
     if(mmFile_) {
@@ -80,6 +81,7 @@ void HttpResponse::Init(const std::string& srcDir, std::string& path, bool isKee
     mmFileStat_ = {0};
 }
 
+// 此处的path还是request传进来的值，即想要访问的页面
 void HttpResponse::MakeResponse(Buffer& buff) {
     // stat(需要查看数据的文件路径的指针， stat结构体的指针)，文件属性就记录在结构体(mmFileStat_)中，成功返回0，失败返回1
     // mmFileStat_.st_mode：文件对应的模式(文件类型、文件权限)
@@ -110,6 +112,7 @@ size_t HttpResponse::FileLen() const {
     return mmFileStat_.st_size;
 }
 
+/*如果错误码code_ = 200，那么path_不变，还是原来申请的文件地址*/
 void HttpResponse::ErrorHtml_() {
     if(CODE_PATH.count(code_) == 1) {
         path_ = CODE_PATH.find(code_)->second;
