@@ -47,16 +47,16 @@ private:
 // 会自动释放内存，无需手动delete，确保阻塞队列和写线程的生命周期和日志实例一致
 // 这里的成员都是指针类型的
     std::unique_ptr<BlockDeque<std::string>> deque_;  // 阻塞队列(日志内容存放位置)
-    std::unique_ptr<std::thread> writeThread_;      // 写日志的线程
+    std::unique_ptr<std::thread> writeThread_;      // 写日志的线程(消费者线程)
     std::mutex mtx_;
 
 public:
     void init(int level, const char* path = "./log",
                 const char* suffix = ".log",
-                int maxQueueCaoacity = 1024);
-    static Log* Instance();   // 单例模式
+                int maxQueueCapacity = 1024);
+    static Log* Instance();   // 单例模式(static：静态成员函数可以不用实例化对象，直接通过类名调用)
 
-    // write()：同步模式下写入文件，异步模式下写入阻塞队列
+    // write()：同步模式下写入文件，异步模式下写入阻塞队列 ——> 也就是blockqueue中的生产者线程
     void write(int level, const char* format,...);
     // 后台线程：从内存队列取出日志，批量写入磁盘（仅异步模式需要）——持续执行
     static void FlushLogThread();   

@@ -1,20 +1,26 @@
 // 当多个源文件（.cpp）通过 #include "Buffer.h"包含同一个头文件时
 // 如果头文件没有保护，其内容会被重复展开到每个源文件中。这会导致重复定义和编译失败
+
+/*ifndef：是C/C++标准，定义完宏后再次遇到，编译器仍需读取文件中的每一行，只不过ifndef和endif之间的内容会丢掉
+pragma once：是编译器扩展，定义完后，用唯一标识判断是否编译过，若定义完则直接不打开该文件*/
+
 #ifndef BUFFER_H   // 如果没有定义BUFFER_H宏
 #define BUFFER_H   // 定义宏
-// #pragma once    // 替代 #ifndef/#define（C++17）
+// #pragma once    
 
 #include <cstring>
 #include <iostream>
-#include <unistd.h>  // write, read
+#include <unistd.h>  // write, read，ssize_t
 #include <sys/uio.h> // readv
 #include <vector>
 #include <atomic>
-#include <assert.h>
+#include <cassert>
 
 class Buffer{
 public:
     Buffer(int initBuffSize = 1024);
+    /*显示析构，告诉你已经考虑了析构函数且没有需要特殊处理的部分
+    当定义了拷贝构造、拷贝赋值运算符或移动操作中的任何一个，编译器可能都不会生成析构，此时不能 = default，需因为存在内存泄漏*/
     ~Buffer() = default;
 
     // 容量查询

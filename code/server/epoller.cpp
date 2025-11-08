@@ -50,7 +50,11 @@ bool Epoller::DelFd(int fd) {
     return 0 == epoll_ctl(epollFd_, EPOLL_CTL_DEL, fd, &ev);
 }
 
-// 返回就绪文件描述符个数
+/*
+返回的两种情况：
+1、timeoutMS时间内无任何I/O事件发生，返回0
+2、timeoutMS时间内有I/O事件就绪，立即返回
+*/
 int Epoller::Wait(int timeoutMs) {
     return epoll_wait(epollFd_, &events_[0], static_cast<int>(events_.size()), timeoutMs);
 } 

@@ -7,6 +7,8 @@
 #include <condition_variable>
 #include <sys/time.h>
 
+// 这个任务队列存放的是用LOG写的内容
+
 // 定义模板类
 template<class T>
 class BlockDeque {
@@ -18,8 +20,11 @@ private:
     size_t capacity_;
     bool isClose_;       // 用来标记队列是否关闭
 
+/*生产者：调用push_back()、push_front()的线程
+消费者：调用pop()的线程*/
+
 public:
-    // explicit：只允许显示调用构造函数
+    // explicit：只允许显式调用构造函数
     explicit BlockDeque(size_t MaxCapacity);
     ~BlockDeque();
 
@@ -46,10 +51,12 @@ public:
 };
 
 template<class T>
-BlockDeque<T>::BlockDeque(size_t MaxCapacity) : capacity(MaxCapacity) {
+BlockDeque<T>::BlockDeque(size_t MaxCapacity) : capacity_(MaxCapacity) {
     assert(MaxCapacity > 0);
     isClose_ = false;      // 标记打开队列
 }
+
+// 队列控制
 
 template<class T>
 BlockDeque<T>::~BlockDeque() {
@@ -62,11 +69,9 @@ void BlockDeque<T>::clear() {
     deq_.clear();
 }
 
-// 队列控制
-
 template<class T>
 void BlockDeque<T>::Close() {    // 关闭队列，需要唤醒所有阻塞线程
-    // lock_guard是一个模板类；mutex是lg的模板参数，表示需要管理的锁的类型(互斥锁)
+    // lock_guard是一个模板类；mutex是lg的模板参数，表示需要管理的锁的类型(互斥锁)；离开作用域（即函数结束后），会自动解锁
     std::lock_guard<std::mutex> locker(mtx_);
     deq_.clear();
     isClose_ = true;
@@ -74,13 +79,14 @@ void BlockDeque<T>::Close() {    // 关闭队列，需要唤醒所有阻塞线�
     condConsumer_.notify_all();
 }
 
+// 后续log.cpp中会创建一个写线程，这是对应blockqueue的唯一一个消费者线程
 template<class T>
 void BlockDeque<T>::flush() {
     condConsumer_.notify_one();
 }
 
 // 基础状态查询
-
+// 只要存在并发访问共享资源就必须要上锁
 template<class T>
 bool BlockDeque<T>::empty() {
     std::lock_guard<std::mutex> locker(mtx_);
@@ -125,21 +131,22 @@ void BlockDeque<T>::push_back(const T& item) {
     std::unique_lock<std::mutex> locker(mtx_);
     // 不用if是因为可能存在虚假唤醒
     while(deq_.size() >= capacity_) {
-        // wait(locker):释放锁，允许其他线程(如消费者)操作队列； 阻塞生产者进程
-        // 传入的是unique_lock<std::mutex>对象
-        condProducer_.wait(locker);   // 当生产者线程被唤醒时，从此处代码开始 
+        // wait(locker):释放锁，允许其他线程(消费者)操作队列； 阻塞生产者进程
+        // 让生产者线程等待 
+        condProducer_.wait(locker);           // 当生产者线程被唤醒时，从此处代码开始 
     }
     deq_.push_back(item);
     condConsumer_.notify_one();
 }
 
+/*注意：不是生产者阻塞后唤醒消费者，而是生产者push了，就会唤醒一个消费者；接着消费者pop后deq不满，且pop后会唤醒生产者*/
 template<class T>
 void BlockDeque<T>::push_front(const T& item) {
     std::unique_lock<std::mutex> locker(mtx_);
     while(deq_.size() >= capacity_) {
         condProducer_.wait(locker);
     }
-    deq_.push_front();
+    deq_.push_front(item);
     condConsumer_.notify_one();
 }
 
@@ -148,6 +155,7 @@ bool BlockDeque<T>::pop(T& item) {
     std::unique_lock<std::mutex> locker(mtx_);
     while(deq_.empty()) {
         // 两种唤醒条件：1、生产者调用 condConsumer_.notify_one()   2、队列关闭
+        // wait(locker) 三步骤(原子操作)：释放锁(unlock()) ——> 将线程阻塞 ——> 被唤醒后重新获取锁(lock())
         condConsumer_.wait(locker);    // 无限期阻塞
         if(isClose_) {
             return false;
@@ -159,11 +167,12 @@ bool BlockDeque<T>::pop(T& item) {
     return true;
 }
 
+// 让消费者线程最多等待timeout秒，如果超时还没有数据，就返回false
 template<class T>
 bool BlockDeque<T>::pop(T& item, int timeout) {
     std::unique_lock<std::mutex> locker(mtx_);
     while(deq_.empty()) {
-        // std::chrono::seconds 表示以秒为单位的时间间隔
+        // std::chrono::seconds(timeout) // 将整数秒转换为标准时间间隔
         // std::chrono::seconds 是专门用于条件变量的带超时等待函数
         if(condConsumer_.wait_for(locker, std::chrono::seconds(timeout)) == std::cv_status::timeout) {
             return false;
@@ -172,7 +181,8 @@ bool BlockDeque<T>::pop(T& item, int timeout) {
             return false;
         }
     }
-    item = deq_.pop_front();
+    item = deq_.front();
+    deq_.pop_front();
     condProducer_.notify_one();
     return true;
 }

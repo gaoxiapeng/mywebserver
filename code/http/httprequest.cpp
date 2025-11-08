@@ -88,9 +88,10 @@ bool HttpRequest::parse(Buffer& buff) {
 /*
 http://www.bilibili.com/，识别到根路径"/"，最终路径变为/index.html——当用户访问网站根目录时，默认显示首页文件
 http://www.bilibili.com/index，识别到预定义路径"/index"，最终路径为/index.html
+实际上path_没有前面的http://www.bilibili.com
 */
 void HttpRequest::ParsePath_() {
-    // 预处理根路径
+    // 预处理根路径，默认访问主页面
     if(path_ == "/") {
         path_ = "/index.html";
     }
@@ -141,17 +142,6 @@ void HttpRequest::ParseBody_(const std::string& line) {
     ParsePost_();   
     state_ = FINISH;
     LOG_DEBUG("Body:%s, len:%s", line.c_str(), line.size());
-}
-
-// 16进制转10进制
-int HttpRequest::ConverHex(char ch) {
-    if(ch >= 'A' && ch <= 'F') {
-        return ch - 'A' + 10;
-    }
-    if(ch >= 'a' && ch <= 'f') {
-        return ch - 'a' + 10;
-    }
-    return ch;
 }
 
 // 处理POST请求——解析表单数据并进行用户验证(如果是POST方法的话)
@@ -220,12 +210,23 @@ void HttpRequest::ParseFromUrlencoded_() {
             break;
         }
     }
-    // 此时i=n-1，j=最后一个'&'后一个
+    // 此时i=n-1，j=最后一个'='后一个，也就是说现在有key无value
     assert(j <= i);
     if(post_.count(key) == 0 && j < i) {
         value = body_.substr(j, i-j);
          post_[key] = value;
     }
+}
+
+// 16进制转10进制
+int HttpRequest::ConverHex(char ch) {
+    if(ch >= 'A' && ch <= 'F') {
+        return ch - 'A' + 10;
+    }
+    if(ch >= 'a' && ch <= 'f') {
+        return ch - 'a' + 10;
+    }
+    return ch;
 }
 
 // 注册成功、登录成功都返回true，除此之外都返回false
@@ -243,7 +244,7 @@ bool HttpRequest::UserVerify(const std::string &name, const std::string &pwd, bo
     bool flag = false;
     MYSQL_RES* res = nullptr;   // 结果集，即整个TABLE内容
     MYSQL_FIELD* fields = nullptr;   // 字段，即TABLE中的表头
-    unsigned int j = 0;   // 有多少字段，即表头有多少列
+    unsigned int j = 0;   // 表头有多少列
     char order[256] = {0};      // 放MYSQL命令的缓冲区
 
     if(!isLogin) {   // 注册
@@ -254,7 +255,7 @@ bool HttpRequest::UserVerify(const std::string &name, const std::string &pwd, bo
     LOG_DEBUG("SELCET the USER'S info:%s", order);
 
     // mysql_query()：执行MYSQL命令成功(这里的执行成功不一定代表TABLE中有对应username)返回0，不进入while
-    if(mysql_query(sql, order)) {
+    if(mysql_query(sql, order)) {   // 执行成功返回0
         mysql_free_result(res);  // 释放结果集
         return false;
     }
@@ -278,14 +279,14 @@ bool HttpRequest::UserVerify(const std::string &name, const std::string &pwd, bo
                 LOG_DEBUG("pwd error!");
             }
         }
-        else {   // 能进入这个while循环且是注册，证明之前row不为空，代表已经有这个用户名了
+        else {   // 能进入这个while循环且是注册，证明之前row不为空，代表已经有这个用户名了且此时是注册
             flag = false;
             LOG_DEBUG("user used!");
         }
     }
     mysql_free_result(res);
 
-    /*注册行为 且 用户名未被使用*/
+    /*注册行为 且 用户名未被使用(若用户名被使用则会进入上面那个while，flag会变成false)*/
     if(!isLogin && flag == true) {
         LOG_DEBUG("register!");
         bzero(order, 256);

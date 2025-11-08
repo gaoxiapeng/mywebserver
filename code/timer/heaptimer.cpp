@@ -5,7 +5,7 @@ void HeapTimer::siftup_(size_t i) {
     assert(i >= 0 && i < heap_.size());
     /*小根堆：特殊的完全二叉树，父节点为i，左节点为2i+1， 右节点为2i+2*/
     size_t j = (i - 1) / 2;      // j是i的父节点
-    while(j > 0) {
+    while(j >= 0) {
         if(heap_[j] < heap_[i]) {
             break;
         }
@@ -29,14 +29,12 @@ bool HeapTimer::siftdown_(size_t index, size_t n) {
     size_t i = index;
     size_t j = 2 * i + 1;
     while(j < n) {
-        if(heap_[j+1] < heap_[j]) j++;      // 父节点要跟较小的那个子节点对比
-        if(heap_[j] < heap_[i]) {
-            SwapNode_(i, j);
-            i = j;
-            j = 2 * i + 1;
-        } else {
-            break;
-        }
+         // 父节点要跟较小的那个子节点对比
+        if(j + 1 < n && heap_[j + 1] < heap_[j]) j++;
+        if(heap_[i] < heap_[j]) break;
+        SwapNode_(i, j);
+        i = j;
+        j = i * 2 + 1;
     }
     return i > index;   // 发生节点移动则为true
 }

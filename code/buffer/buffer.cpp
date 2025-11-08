@@ -24,9 +24,9 @@ void Buffer::Retrieve(size_t len) {         // 已读len，移动readPos_
 }
 void Buffer::RetrieveUntil(const char* end) {  // 将readPos_移到指定位置
     assert(Peek() <= end);
-    Retrieve(end - Peek());
+    Retrieve(end - Peek());                    // 两个指针指向同一块连续内存时，指针相减是合法的
 }
-void Buffer::RetrieveAll() {                // 重置缓冲区
+void Buffer::RetrieveAll() {                   // 重置缓冲区
     // 现代C++方法,'\0'是char，'0'是int
     std::fill(buffer_.begin(), buffer_.end(), '\0');
     readPos_ = 0;
@@ -95,7 +95,7 @@ ssize_t Buffer::ReadFd(int fd, int* saveErrno) {
     iov[1].iov_base = buff;
     iov[1].iov_len = sizeof(buff);
 
-    // 分散读（会自动写入，后续只需要改变指针即可）
+    // 分散写（会自动写入，后续只需要改变指针即可）
     // len是本次readv调用实际从fd中读取的字节总数，=min(iov总长度, fd)
     const ssize_t len = readv(fd, iov, 2);
     if(len < 0) {
@@ -132,6 +132,9 @@ char* Buffer::BeginPtr_() {
 const char* Buffer::BeginPtr_() const {
     return &*buffer_.begin();
 }
+
+/*1、现有空间无法满足（包括prepend空间） ——> 扩容
+2、现有空间能够满足 ——> 将可读区域挪移到buffer开头*/
 void Buffer::MakeSpace_(size_t len) {
     if(WritableBytes() + PrependableBytes() < len) {  // 需要扩容（要考虑到prepandable的长度）
         buffer_.resize(writePos_ + len + 1);

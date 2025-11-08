@@ -2,23 +2,35 @@
 
 /*写线程writeThread_不属于线程池，其生命周期和日志实例绑定了*/
 
-Log::Log() : lineCount_(0), toDay_(0), isAsync_(nullptr), deque_(nullptr), writeThread_(nullptr), fp_(nullptr) {}
+Log::Log() {
+    lineCount_ = 0;
+    isAsync_ = false;
+    writeThread_ = nullptr;
+    deque_ = nullptr;
+    toDay_ = 0;
+    fp_ = nullptr;
+}
 
+/*
+1、while(!deque_->empty())确保队列中所有日志被处理
+2、writeThread_->join()确保写线程完成当前正在执行的操作后自然退出
+3、两者结合保证了：所有已产生的日志都被完整写入文件，且不会出现资源访问冲突
+*/
 Log::~Log() {
     // 由于unique_ptr，deque_和writeThread都是指针，因此用->
     // 处理写线程
     // joinable():检查一个线程对象是否可以被join()或detach()
     if(writeThread_ && writeThread_->joinable()) {
         while(!deque_->empty()) {
-            deque_->flush();  // 唤醒后台刷盘线程 writeThread_
+            deque_->flush();  // 唤醒后台刷盘线程writeThread_，也就是blockqueue中的消费者线程
         }
-        deque_->Close();
-        writeThread_->join(); // 主线程Log阻塞，等待写进程结束，再析构
+        deque_->Close();      // 关闭队列，阻止新的任务进入队列
+        writeThread_->join(); // join —— 让主线程等待写线程工作结束，阻塞主线程(调用析构函数的线程)，再析构 ——> 确保日志优雅关闭，防止日志丢失
     }
     // 处理文件资源
     if(fp_) {
         std::lock_guard<std::mutex> locker(mtx_);
-        flush();        // 强制写入FILE*缓冲区数据
+        flush();        // 强制写入内核缓冲区
         fclose(fp_);    // 关闭文件
     }
 }
@@ -36,7 +48,7 @@ void Log::init(int level = 1, const char* path, const char* suffix, int maxQueue
         // 只有当deque_为空时才继续操作，这样是为了防止重复初始化队列和线程
         if(!deque_) {   
             std::unique_ptr<BlockDeque<std::string>> newDeque(new BlockDeque<std::string>(maxQueueSize));
-            deque_ = std::move(newDeque);  // newDeque是unique_ptr指针，不能复制，只能移动
+            deque_ = std::move(newDeque);  // newDeque是unique_ptr指针，unique_ptr禁止拷贝构造
 
             // 动态创建一个线程，并指定其入口函数为 FlushLogThread(入口函数：线程启动后执行的第一个函数)
             std::unique_ptr<std::thread> NewThread(new std::thread(FlushLogThread));
@@ -47,7 +59,7 @@ void Log::init(int level = 1, const char* path, const char* suffix, int maxQueue
         } 
     } 
     else {
-            isAsync_ = false;
+        isAsync_ = false;
     }
 
     lineCount_ = 0;
@@ -77,20 +89,25 @@ void Log::init(int level = 1, const char* path, const char* suffix, int maxQueue
         }
         fp_ = fopen(fileName, "a"); // 以追加模式打开
         if(fp_ == nullptr) {
-            mkdir(path_, 0777);
+            mkdir(path_, 0777);     // 0777：所有用户都有读、写、执行的权限
             fp_ = fopen(fileName, "a");
         }
         assert(fp_ != nullptr);
     }
 }
 
+/*
+- 判断是否需要创建新的日志文件
+- 写日志
+- 将日志推送到队列或内核缓冲区中
+*/
 void Log::write(int level, const char* format, ...) {
     time_t tSec = time(nullptr);
     struct tm *sysTime = localtime(&tSec);
     struct tm t = *sysTime;
     va_list valist;   // 可变参数列表
 
-    // 日志
+    // 判断是否需要创建新的日志文件
     {
         // 处理日志名
         if(toDay_ != t.tm_mday || (lineCount_ && (lineCount_ % MAX_LINES) == 0)) {
@@ -106,7 +123,7 @@ void Log::write(int level, const char* format, ...) {
                 snprintf(newFile, LOG_NAME_LEN - 72, "%s/%s%s", path_, tail, suffix_);
                 toDay_ = t.tm_mday;
                 lineCount_ = 0;
-            } else {    // 一个文件写满了
+            } else {    // 一个文件写满了 —— 文件名中多了一个：当天的第几个日志文件(lineCount_ / MA_LINES)
                 snprintf(newFile, LOG_NAME_LEN - 72, "%s/%s-%d%s", path_, tail, (lineCount_ / MAX_LINES), suffix_);
             }
 
@@ -126,24 +143,29 @@ void Log::write(int level, const char* format, ...) {
         int n = snprintf(buff_.BeginWrite(), 128, "%04d-%02d-%2d %02d:%02d:%02d",
                             t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
                             t.tm_hour, t.tm_min, t.tm_sec);
-        // 时间戳
+        // n：格式化后的字符串长度
         buff_.HasWritten(n);
 
         // 日志级别
         AppendLogLevelTitle_(level);
 
         // 用户消息
+        /*
+        LOG_INFO("用户 %s 登录成功，IP: %s", "Alice", "192.168.1.100");
+        format = "用户 %s 登录成功，IP: %s"
+        valist = ["Alice", "192.168.1.100"]
+        */
         va_start(valist, format);   // 初始化可变参数列表
         int m = vsnprintf(buff_.BeginWrite(), buff_.WritableBytes(), format, valist);
         va_end(valist);   // 清理可变参数列表
         buff_.HasWritten(m);
-        buff_.Append("\n\0", 2);
+        buff_.Append("\n\0", 2);    // 换行
 
 
         // 将上述写入内存的日志推送到队列或文件中
-        if(isAsync_ && deque_ && !deque_->full()) {  // 异步
+        if(isAsync_ && deque_ && !deque_->full()) {  // 异步：推送到deque中
             deque_->push_back(buff_.RetrieveAllToStr());
-        } else {                                     // 同步
+        } else {                                     // 同步：直接写到FILE*缓冲区中
             fputs(buff_.Peek(), fp_);
         }
         buff_.RetrieveAll();
@@ -151,21 +173,24 @@ void Log::write(int level, const char* format, ...) {
 }
 
 
-// 异步写日志：将deque_队列中的日志先存放到FILE*缓冲区中，而后再刷盘(由缓冲区写到磁盘中)
+// 异步写日志：将deque_队列中的内容先写到FILE*缓冲区中，而后由FILE*缓冲区写到内核缓冲区，最后由操作系统写入磁盘
+// 无限循环，只要deque没关闭，写线程就会一直执行这个函数
 void Log::AsyncWrite_() {
     std::string str = "";
     while(deque_->pop(str)) {     // str接收pop出的item
         std::lock_guard<std::mutex> locker(mtx_);
-        // 将日志写入FILE*的内核缓冲区
+        // 将日志写入FILE*缓冲区
         fputs(str.c_str(), fp_);  // fputs()需要接收const char*类型数据，c_str()将string转为C风格的const char*
     }
 }
 
+// 为什么这里任何操作都只唤醒一个写线程，即deque_->flush()(condConsumer.notify_one())，因为前面(std::unique_ptr<std::thread> writeThread_)只构建了一个写线程
+// 且一个写线程足以处理整个任务队列，多个写线程反而会造成竞争
 void Log::flush() {
     if(isAsync_) {    
-        deque_->flush();   // 唤醒writethread_进程，而后执行AsyncWrite_()
+        deque_->flush();   // 唤醒writethread_线程，而后执行AsyncWrite_()
     }
-    fflush(fp_);    // 刷盘
+    fflush(fp_);    // 从FILE*缓冲区强制写入内核缓冲区
 }
 
 // 单例模式核心
@@ -199,18 +224,18 @@ void Log::AppendLogLevelTitle_(int level) {
             buff_.Append("[error]:", 9);
             break;
         default:
-            buff_.Append("[info]: ", 9);
+            buff_.Append("[info] :", 9);
             break;
     }
 }
 
-// 查看通知级别
-int Log::GetLevel() {
-    std::lock_guard<std::mutex> locker(mtx_);
-    return level_;
-}
 // 调整通知级别
 void Log::SetLevel(int level) {
     std::lock_guard<std::mutex> locker(mtx_);
     level_ = level;
+}
+// 查看通知级别
+int Log::GetLevel() {
+    std::lock_guard<std::mutex> locker(mtx_);
+    return level_;
 }

@@ -72,6 +72,9 @@ int HttpConn::GetPort() const {
 
 /*分散读
 ET：只在数据到达时触发一次，且必须循环读完*/ 
+/*len = 0 : 对端关闭连接
+> 0 ：成功读取
+< 0 ：读取错误*/
 ssize_t HttpConn::read(int* saveErrno) {
     ssize_t len = -1;
     do {
@@ -114,6 +117,8 @@ ssize_t HttpConn::write(int* saveErrno) {
     } while(isET || ToWriteBytes() > 10240);
 }
 
+/*true：生成完整HTTP响应
+false：请求不完整/解析失败*/
 bool HttpConn::process() {
     request_.Init();
     if(readBuff_.ReadableBytes() <= 0) {

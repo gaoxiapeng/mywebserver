@@ -1,5 +1,14 @@
 #include "sqlconnpool.h"
 
+SqlConnPool::SqlConnPool() {
+    useCount_ = 0;
+    freeCount_ = 0;
+}
+
+SqlConnPool::~SqlConnPool() {
+    ClosePool();
+}
+
 // 单例模式
 SqlConnPool* SqlConnPool::Instance() {
     static SqlConnPool connPool;
@@ -36,13 +45,9 @@ void SqlConnPool::Init(const char* host, int port,
 
 MYSQL* SqlConnPool::GetConn() {
     MYSQL* sql = nullptr;
-    if(connQue_.empty()) {
-        LOG_WARN("SqlConnPool busy!")
-        return nullptr;
-    }
-    // 如果semId_>0，立即减1并继续执行； 如果semId_=0，阻塞线程
+    // 先保证队列非空
     sem_wait(&semId_);
-    {
+    {   
         std::lock_guard<std::mutex> locker(mtx_);
         sql = connQue_.front();
         connQue_.pop();
@@ -65,7 +70,6 @@ void SqlConnPool::ClosePool() {
         connQue_.pop();
         mysql_close(item);
     }
-    mysql_library_end();
 }
 
 int SqlConnPool::GetFreeConnCount() {

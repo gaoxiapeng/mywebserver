@@ -1,5 +1,5 @@
-#ifndef THREADPOOL.H
-#define THREADPOOL.J
+#ifndef THREADPOOL_H
+#define THREADPOOL_H
 
 #include <cassert>
 #include <mutex>
@@ -18,7 +18,7 @@ public:
             // thread的构造函数接受可调用对象(此处为Lambda)作为线程的入口函数
             std::thread([pool = pool_] {
                 std::unique_lock<std::mutex> locker(pool->mtx);
-                while(true) {
+                while(true) {   // 无限循环，保持线程活性
                     if(!pool->tasks.empty()) {
                         auto task = pool->tasks.front();
                         pool->tasks.pop();
@@ -34,7 +34,7 @@ public:
                     else pool->cond.wait(locker);   // 释放锁并阻塞当前线程(直到被notify唤醒)
                 }
             }).detach();    // 工作子线程独立运行，和ThreadPool这一主线程独立开来
-        }
+        }   // 主线程进入i=0，创建了工作线程并进入while循环，由于.detach()，主、工解绑，主线程继续i=1
     }
     
     ThreadPool() = default;   // 运行创建对象时不传参数
@@ -50,7 +50,7 @@ public:
     ~ThreadPool() {
         if(pool_) {
             std::lock_guard<std::mutex> locker(pool_->mtx);
-            pool_->isClosed = false;
+            pool_->isClosed = true;
         }
         pool_->cond.notify_all();
     }
@@ -66,14 +66,20 @@ public:
     forward：完美转发，保持参数的左值/右值的原有属性
     */
     template<class F>
-    void AddTask(F&& task) {
+    void AddTask(F&& task) {    // 通用引用
         {
             std::lock_guard<std::mutex> locker(pool_->mtx);
-            pool_->tasks.emplace(std::forward<F>(task));
+            pool_->tasks.emplace(std::forward<F>(task));    // 完美转发
         }
         pool_->cond.notify_one();    // 唤醒一个等待的工作线程
     }
 
+    /*
+    管理线程池的共享状态（Pool结构体）
+        1、所有线程（工作线程、主线程）安全访问同一 Pool实例（如任务队列、关闭标志）
+        2、当最后一个引用 pool_的线程结束时，自动释放 Pool对象
+        3、通过 shared_ptr的原子引用计数，保证 Pool的析构时机正确
+    */
 private:
     // 封装线程池的共享状态
     struct Pool {
@@ -82,15 +88,7 @@ private:
         std::condition_variable cond;
         std::queue<std::function<void()>> tasks;   // 任务是无参数、无返回的可调用对象
     };
-    /*
-    管理线程池的共享状态（Pool结构体）
-        1、所有线程（工作线程、主线程）安全访问同一 Pool实例（如任务队列、关闭标志）
-        2、当最后一个引用 pool_的线程结束时，自动释放 Pool对象
-        3、通过 shared_ptr的原子引用计数，保证 Pool的析构时机正确
-    */
     std::shared_ptr<Pool> pool_;
-
-
 };
 
 #endif
