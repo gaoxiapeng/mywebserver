@@ -163,6 +163,45 @@ public:
     }
 };
 ```
+
+### 懒汉模式 vs 饿汉模式
+> **懒汉模式**
+```
+class LazySingleton {
+public:
+    static LazySingleton* getInstance() {
+        static LazySingleton instance;  // 首次调用时创建
+        return &instance;               // 返回指针
+    }
+    
+    LazySingleton(const LazySingleton&) = delete;
+    void operator=(const LazySingleton&) = delete;
+
+private:
+    LazySingleton() = default;
+};
+```
+
+> **饿汉模式**
+```
+class HungrySingleton {
+public:
+    static HungrySingleton* getInstance() {
+        return instance;  // 直接返回已创建的实例
+    }
+    
+    HungrySingleton(const HungrySingleton&) = delete;
+    void operator=(const HungrySingleton&) = delete;
+
+private:
+    HungrySingleton() = default;
+    static HungrySingleton* instance;  // 声明静态实例
+};
+
+// 程序启动前初始化
+HungrySingleton* HungrySingleton::instance = new HungrySingleton();
+```
+
 ---
 
 **同步写日志：边生成边写入 —— 日志产生后立即写入磁盘文件**
@@ -279,5 +318,3 @@ AbstractBase::~AbstractBase() {} // 必须提供实现
 4. 纯虚析构函数使类抽象化同时保证析构安全
 
 
-# 日志
-![Alt text](~Log_Asy.png)

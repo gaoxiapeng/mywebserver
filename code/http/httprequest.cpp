@@ -26,11 +26,9 @@ bool HttpRequest::IsKeepAlive() const {
 }
 
 /* 一个POST方法的请求报文
-POST /api/user HTTP/1.1         // 请求行
-Host: example.com               // 请求头
-Connection: keep-alive
-Content-Type: application/x-www-form-urlencoded
-Content-Length: 123
+POST /index HTTP/1.1                 // 请求行      
+Connection: keep-alive          // 请求头
+Connect-Type: application/x-www-form-urlencoded
 
 username=test%20user&password=123%40abc           // 请求体
 */
@@ -149,9 +147,13 @@ void HttpRequest::ParsePost_() {
     if(method_ == "POST" && header_["Connect-Type"] == "application/x-www-form-urlencoded") {
         // 解析表单数据，映射到post_里
         ParseFromUrlencoded_();  
+
+        // 注意：这里的path_都是经过ParsePath处理后的，因此多了.html后缀，无法与DEFAULT_HTML_TAG中的元素匹配起来
+        std::string originalPath = path_.substr(0, path_.find('.html'));
+
         // 解析完表单数据，如果是注册或登记，就进行用户验证
-        if(DEFAULT_HTML_TAG.count(path_)) {
-            int tag = DEFAULT_HTML_TAG.find(path_)->second;
+        if(DEFAULT_HTML_TAG.count(originalPath)) {
+            int tag = DEFAULT_HTML_TAG.find(originalPath)->second;
             LOG_DEBUG("Tag:%d", tag);
             if(tag == 0 || tag == 1) { 
                 bool isLogin = (tag == 1);
@@ -214,7 +216,7 @@ void HttpRequest::ParseFromUrlencoded_() {
     assert(j <= i);
     if(post_.count(key) == 0 && j < i) {
         value = body_.substr(j, i-j);
-         post_[key] = value;
+        post_[key] = value;
     }
 }
 
@@ -300,7 +302,6 @@ bool HttpRequest::UserVerify(const std::string &name, const std::string &pwd, bo
         // 注册成功
         flag = true;
     }
-    SqlConnPool::Instance()->FreeConn(sql);
     LOG_DEBUG("UserVerify success!")
     /*这里包括的isLogin=true 且 username不存在的情况，直接返回flag=false*/
     return flag;

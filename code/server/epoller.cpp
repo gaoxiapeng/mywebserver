@@ -5,7 +5,7 @@ int epoll_create(int size);         // 成功返回文件描述符，失败返�
 int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);     // 成功返回0， 失败返回-1
 op: EPOLL_CTL_ADD   EPOLL_CTL_DEL  EPOLL_CTL_MOD
 
-int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
+int epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);   // events就是就绪列表
 
 struct epoll_event {
     uint32_t     events;  // 监听的事件类型（EPOLLIN：可读  EPOLLOUT：可写  EPOLLET：边缘触发）

@@ -99,7 +99,7 @@ void Log::init(int level = 1, const char* path, const char* suffix, int maxQueue
 /*
 - 判断是否需要创建新的日志文件
 - 写日志
-- 将日志推送到队列或内核缓冲区中
+- 将日志推送到队列(异步)或内核缓冲区(同步)中
 */
 void Log::write(int level, const char* format, ...) {
     time_t tSec = time(nullptr);

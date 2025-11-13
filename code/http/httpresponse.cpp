@@ -81,7 +81,7 @@ void HttpResponse::Init(const std::string& srcDir, std::string& path, bool isKee
     mmFileStat_ = {0};
 }
 
-// 此处的path还是request传进来的值，即想要访问的页面
+/*根据想要访问的页面——path_，设置对应状态码以及生成响应报文*/
 void HttpResponse::MakeResponse(Buffer& buff) {
     // stat(需要查看数据的文件路径的指针， stat结构体的指针)，文件属性就记录在结构体(mmFileStat_)中，成功返回0，失败返回1
     // mmFileStat_.st_mode：文件对应的模式(文件类型、文件权限)
@@ -132,6 +132,19 @@ void HttpResponse::AddStateLine_(Buffer& buff) {
     buff.Append("HTTP/1.1" + std::to_string(code_) + " " + status + "\r\n");
 }
 
+std::string HttpResponse::GetFileType_() {
+    // size_type：无符号整型，用来表示字符串长度或索引位置
+    std::string::size_type idx = path_.find_last_of('.');
+    if(idx == std::string::npos) {
+        return "text/plain";   // 文件无后缀则默认纯文本形式
+    }
+    std::string suffix = path_.substr(idx); // 直接从idx截到最后
+    if(SUFFIX_TYPE.count(suffix) == 1) {
+        return SUFFIX_TYPE.find(suffix)->second;
+    }
+    return "text/plain";    // 未知扩展名的默认处理
+}
+
 // Connection + Content-Type
 void HttpResponse::AddHeader_(Buffer& buff) {
     buff.Append("Connection: ");
@@ -175,19 +188,6 @@ void HttpResponse::UnmapFile() {
         munmap(mmFile_, mmFileStat_.st_size);     // 地址，长度
     }
     mmFile_ = nullptr;
-}
-
-std::string HttpResponse::GetFileType_() {
-    // size_type：无符号整型，用来表示字符串长度或索引位置
-    std::string::size_type idx = path_.find_last_of('.');
-    if(idx == std::string::npos) {
-        return "text/plain";   // 文件无后缀则默认纯文本形式
-    }
-    std::string suffix = path_.substr(idx); // 直接从idx截到最后
-    if(SUFFIX_TYPE.count(suffix) == 1) {
-        return SUFFIX_TYPE.find(suffix)->second;
-    }
-    return "text/plain";    // 未知扩展名的默认处理
 }
 
 void HttpResponse::ErrorContent(Buffer& buff, std::string message) {

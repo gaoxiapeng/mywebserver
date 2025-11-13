@@ -5,6 +5,13 @@ const char* HttpConn::srcDir;
 std::atomic<int> HttpConn::userCount;
 bool HttpConn::isET;
 
+/*
+1、接收请求：init() -> read()
+2、解析请求：process() -> request_.parse()
+3、生成响应：response_.MakeResponse()
+4、发送响应：write()
+*/
+
 HttpConn::HttpConn() {
     fd_ = -1;
     addr_ = {0};
@@ -87,38 +94,10 @@ ssize_t HttpConn::read(int* saveErrno) {
     return len;
 }
 
-/*分散写*/
-ssize_t HttpConn::write(int* saveErrno) {
-    ssize_t len = -1;
-    do {
-        // len代表write每次写入的长度; 前面虽然定义了两个iov，但看响应报文大小调整使用几个
-        len = writev(fd_, iov_, iovCnt_);
-        if(len < 0) {
-            *saveErrno = errno;
-            break;
-        }
-
-        if(iov_[0].iov_len + iov_[1].iov_len == 0) {
-            break;      // 传输结束
-        }
-        else if (static_cast<size_t>(len) > iov_[0].iov_len) {
-            // 移动iov_[1].iov_base代表下次从这里开始写
-            iov_[1].iov_base = (uint*)iov_[1].iov_base + (len - iov_[0].iov_len);
-            iov_[1].iov_len -= (len - iov_[0].iov_len);  
-            if(iov_[0].iov_len) {
-                writeBuff_.RetrieveAll();
-                iov_[0].iov_len = 0;
-            }
-        } else {
-            iov_[0].iov_base = (uint*)iov_[0].iov_base + len;
-            iov_[0].iov_len -= len; 
-            writeBuff_.Retrieve(len);
-        }
-    } while(isET || ToWriteBytes() > 10240);
-}
-
 /*true：生成完整HTTP响应
 false：请求不完整/解析失败*/
+
+/*解析请求报文 + 生成响应报文*/
 bool HttpConn::process() {
     request_.Init();
     if(readBuff_.ReadableBytes() <= 0) {
@@ -148,10 +127,40 @@ bool HttpConn::process() {
     最后通过 writev将响应头和文件内容一并发送​​
     */
     if(response_.FileLen() > 0 && response_.File()) {
-        iov_[1].iov_base = response_.File();
-        iov_[1].iov_len = response_.FileLen();
+        iov_[1].iov_base = response_.File();        // 待发送数据首地址
+        iov_[1].iov_len = response_.FileLen();      // 待发送数据长度
         iovCnt_ = 2;
     }
     LOG_DEBUG("filesize:%d, %d  to %d", response_.FileLen() , iovCnt_, ToWriteBytes());
     return true;
+}
+
+/*分散写*/
+ssize_t HttpConn::write(int* saveErrno) {
+    ssize_t len = -1;
+    do {
+        // len代表write每次写入的长度; 前面虽然定义了两个iov，但看响应报文大小调整使用几个
+        len = writev(fd_, iov_, iovCnt_);
+        if(len < 0) {
+            *saveErrno = errno;
+            break;
+        }
+
+        if(iov_[0].iov_len + iov_[1].iov_len == 0) {
+            break;      // 传输结束
+        }
+        else if (static_cast<size_t>(len) > iov_[0].iov_len) {
+            // 移动iov_[1].iov_base代表下次从这里开始写
+            iov_[1].iov_base = (uint8_t*)iov_[1].iov_base + (len - iov_[0].iov_len);
+            iov_[1].iov_len -= (len - iov_[0].iov_len);  
+            if(iov_[0].iov_len) {
+                writeBuff_.RetrieveAll();   // 清空是否有必要？数据尚未发送
+                iov_[0].iov_len = 0;
+            }
+        } else {
+            iov_[0].iov_base = (uint8_t*)iov_[0].iov_base + len;
+            iov_[0].iov_len -= len; 
+            writeBuff_.Retrieve(len);
+        }
+    } while(isET || ToWriteBytes() > 10240);
 }

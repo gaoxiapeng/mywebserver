@@ -2,6 +2,22 @@
 
 using namespace std;
 
+/*
+1、初始化
+    - 创建监听socket，设置端口复用、优雅关闭等选项
+    - 初始化线程池、数据库连接池、日志系统
+    - 配置epoll事件模式
+2、事件循环核心
+    - epoll_wait监听所有文件描述符(监听socket+客户端连接)
+3、连接管理
+    - 接受连接：accept新客户端，创建HttpConn对象，加入epoll监控
+    - 关闭连接：处理异常事件或超时连接
+4、请求处理
+    - 读事件：投递到线程池读取并解析HTTP请求
+    - 写事件：投递到线程池生成并发送HTTP响应
+    - 过程控制：根据处理结果动态修改epoll监听事件（EPOLLIN/EPOLLOUT）
+*/
+
 WebServer::WebServer(
             int port, int trigMode, int timeoutMS, bool OptLinger,
             int sqlPort, const char* sqlUser, const char* sqlPwd,
@@ -46,187 +62,6 @@ WebServer::~WebServer() {
     isClose_ = true;
     free(srcDir_);
     SqlConnPool::Instance()->ClosePool();
-}
-
-// 设置监听套接字和连接套接字(客户端fd)的epoll事件模式
-void WebServer::InitEventMode_(int trigMode) {
-    // 用于监听 服务器监听socket 的事件，当客户端在握手过程中关闭连接时，服务器立即感知
-    listenEvent_ = EPOLLRDHUP;      // 表示对端(客户端)已关闭连接
-    // 用于监听 客户端连接socket 的事件，确保一个客户端 fd 的事件只由一个线程处理
-    connEvent_ = EPOLLONESHOT | EPOLLRDHUP;     // 事件被触发后，该fd会被epoll自动禁用，防止多线程竞争
-
-    switch(trigMode) 
-    {
-    case 0:
-        break;   // 全部LT
-    case 1:
-        connEvent_ |= EPOLLET;
-        break;
-    case 2:
-        listenEvent_ |= EPOLLET;
-        break;
-    case 3:
-        listenEvent_ |= EPOLLET;
-        connEvent_ |= EPOLLET;
-        break;
-    default:
-        listenEvent_ |= EPOLLET;
-        connEvent_ |= EPOLLET;
-        break;
-    }
-    HttpConn::isET = (connEvent_ & EPOLLET);
-}
-
-// 实现主事件循环，通过 epoll 监听和处理所有 I/O 事件
-void WebServer::Start() {
-    int timeMS = -1;    // 无就绪线程将一一直阻塞
-    if(!isClose_) {
-        LOG_INFO("========== Server Start! ==========");
-    }
-    while(!isClose_) {
-        if(timeoutMS_ > 0) {
-            timeMS = timer_->GetNextTick();     // 获取最近的超时时间
-        }
-        // 超时事件内无I/O事件，则返回0；有I/O事件，则立即返回就绪I/O的数量
-        int eventCnt = epoller_->Wait(timeMS);
-        for(int i = 0; i < eventCnt; i++) {
-            int fd = epoller_->GetEventFd(i);
-            uint32_t events = epoller_->GetEvents(i);
-            if(fd == listenFd_) {
-                DealListen_();
-            }
-            // EPOLLRDHUP：客户端关闭连接  EPOLLHUP：连接完全断开  EPOLLERR：连接发生错误
-            else if(events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
-                assert(users_.count(fd) > 0);
-                CloseConn_(&users_[fd]);
-            }
-            else if(events & EPOLLIN) {
-                assert(users_.count(fd) > 0);
-                DealRead_(&users_[fd]);
-            }
-            else if(events & EPOLLOUT) {
-                assert(users_.count(fd) > 0);
-                DealWrite_(&users_[fd]);
-            } else {
-                LOG_ERROR("Unexpected events!");
-            }
-        }
-    }
-}
-
-// 向客户端发送错误信息并立即关闭连接
-void WebServer::SendError_(int fd, const char* info) {
-    assert(fd > 0);
-    int ret = send(fd, info, strlen(info), 0);  // 发送失败<0； 0：默认阻塞发送
-    if(ret < 0) {
-        LOG_WARN("send error to client[%d] error!", fd);
-    }
-    close(fd);
-}
-
-void WebServer::CloseConn_(HttpConn* client) {
-    assert(client);
-    LOG_INFO("Clinet[%d] quit", client->GetFd());
-    epoller_->DelFd(client->GetFd());
-    client->Close();
-}
-
-void WebServer::AddClient_(int fd, sockaddr_in addr) {
-    assert(fd > 0);
-    users_[fd].init(fd, addr);
-    if(timeoutMS_ > 0) {
-        // 在 timeoutMS_后，调用当前WebServer对象的 CloseConn_方法，并传入 &users_[fd]作为参数，作为回调函数
-        timer_->add(fd, timeoutMS_, std::bind(&WebServer::CloseConn_, this, &users_[fd]));
-    }
-    epoller_->AddFd(fd, EPOLLIN | connEvent_);
-    SetFdNonblock(fd);
-    LOG_INFO("Client[%d] in!", users_[fd].GetFd());
-}
-
-void WebServer::DealListen_() {
-    struct sockaddr_in addr;
-    socklen_t len = sizeof(addr);
-    do {
-        // fd：专门用于与当前连接的客户端通信
-        // 要将IPv4地址结构sockaddr_in强转为通用地址结构sockaddr
-        int fd = accept(listenFd_, (struct sockaddr*)&addr, &len);
-        if(fd <= 0) {
-            return;     // accept失败
-        }
-        // 连接数检查
-        else if(HttpConn::userCount >= MAX_FD) {
-            SendError_(fd, "Server busy!");
-            LOG_WARN("Client is full!");
-            return;
-        }
-        AddClient_(fd, addr);
-    } while(listenEvent_ & EPOLLET);    // ET模式循环接收
-}
-
-void WebServer::DealRead_(HttpConn* client) {
-    assert(client);
-    ExtentTime_(client);
-    threadpool_->AddTask(std::bind(&WebServer::OnRead_, this, client));
-}
-
-void WebServer::DealWrite_(HttpConn* client) {
-    assert(client);
-    ExtentTime_(client);
-    threadpool_->AddTask(std::bind(&WebServer::OnWrite_, this, client));
-}
-
-void WebServer::ExtentTime_(HttpConn* client) {
-    assert(client);
-    if(timeoutMS_ > 0) {
-        timer_->adjust(client->GetFd(), timeoutMS_);
-    }
-}
-
-void WebServer::OnRead_(HttpConn* client) {
-    assert(client);
-    int ret = -1;
-    int readErrno = 0;
-    ret = client->read(&readErrno);     // 返回的是读取的长度
-    // 读取失败    EAGAIN：非阻塞模式下的正常状态​​：发送缓冲区已满，下次再试
-    if(ret <= 0 && readErrno != EAGAIN) {
-        CloseConn_(client);
-        return;
-    }
-    OnProcess_(client);
-}
-
-void WebServer::OnProcess_(HttpConn* client) {
-    // true：生成完整HTTP响应 ——> 需要注册EPOLLOUT准备发送
-    if(client->process()) {
-        epoller_->ModFd(client->GetFd(), connEvent_ | EPOLLOUT);
-    } 
-    // false：请求不完整/解析失败 ——> 保持EPOLLIN继续接收数据
-    else {
-        epoller_->ModFd(client->GetFd(), connEvent_ | EPOLLIN);
-    }
-}
-
-void WebServer::OnWrite_(HttpConn* client) {
-    assert(client);
-    int ret = -1;
-    int writeErrno = 0;
-    ret = client->write(&writeErrno);
-    // 传输完成
-    if(client->ToWriteBytes() == 0) {
-        // 如果是持续连接就继续处理下个请求
-        if(client->IsKeepAlive()) {
-            OnProcess_(client);     
-            return;
-        }
-    }
-    // 发送失败
-    else if(ret < 0) {
-        // 发送缓冲区满了，此时需要重新注册EPOLLOUT(ET模式下的特殊处理，否则无法发送数据)
-        if(writeErrno == EAGAIN) {
-            epoller_->ModFd(client->GetFd(), connEvent_ | EPOLLOUT);
-        }
-    }
-    CloseConn_(client);
 }
 
 /*    
@@ -322,6 +157,194 @@ bool WebServer::InitSocket_() {
     return true;
 }
 
+// 设置监听套接字和连接套接字(客户端fd)的epoll事件模式
+void WebServer::InitEventMode_(int trigMode) {
+    // 用于监听 服务器监听socket 的事件，当客户端在握手过程中关闭连接时，服务器立即感知
+    listenEvent_ = EPOLLRDHUP;      // 表示对端(客户端)已关闭连接
+    // 用于监听 客户端连接socket 的事件，确保一个客户端 fd 的事件只由一个线程处理
+    connEvent_ = EPOLLONESHOT | EPOLLRDHUP;     // 事件被触发后，该fd会被epoll自动禁用，防止多线程竞争
+
+    switch(trigMode) 
+    {
+    case 0:
+        break;   // 全部LT
+    case 1:
+        connEvent_ |= EPOLLET;
+        break;
+    case 2:
+        listenEvent_ |= EPOLLET;
+        break;
+    case 3:
+        listenEvent_ |= EPOLLET;
+        connEvent_ |= EPOLLET;
+        break;
+    default:
+        listenEvent_ |= EPOLLET;
+        connEvent_ |= EPOLLET;
+        break;
+    }
+    HttpConn::isET = (connEvent_ & EPOLLET);
+}
+
+// 实现主事件循环，调用epoll_wait阻塞等待事件发生，循环处理所有就绪的I/O事件（新连接、读、写、错误）
+void WebServer::Start() {
+    int timeMS = -1;    // 无就绪线程将一一直阻塞
+    if(!isClose_) {
+        LOG_INFO("========== Server Start! ==========");
+    }
+    while(!isClose_) {
+        if(timeoutMS_ > 0) {
+            timeMS = timer_->GetNextTick();     // 获取最近的超时时间
+        }
+        // 超时事件内无I/O事件，则返回0；有I/O事件，则立即返回就绪I/O的数量
+        int eventCnt = epoller_->Wait(timeMS);
+        for(int i = 0; i < eventCnt; i++) {
+            int fd = epoller_->GetEventFd(i);
+            uint32_t events = epoller_->GetEvents(i);
+            if(fd == listenFd_) {
+                DealListen_();
+            }
+            // EPOLLRDHUP：客户端关闭连接  EPOLLHUP：连接完全断开  EPOLLERR：连接发生错误
+            else if(events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
+                assert(users_.count(fd) > 0);
+                CloseConn_(&users_[fd]);
+            }
+            else if(events & EPOLLIN) {
+                assert(users_.count(fd) > 0);
+                DealRead_(&users_[fd]);
+            }
+            else if(events & EPOLLOUT) {
+                assert(users_.count(fd) > 0);
+                DealWrite_(&users_[fd]);
+            } else {
+                LOG_ERROR("Unexpected events!");
+            }
+        }
+    }
+}
+
+
+/*连接生命周期管理*/
+// 处理新连接：接受（accept）新的客户端连接，进行连接数检查，并为新连接创建管理对象
+void WebServer::DealListen_() {
+    struct sockaddr_in addr;
+    socklen_t len = sizeof(addr);
+    do {
+        // fd：专门用于与当前连接的客户端通信
+        // 要将IPv4地址结构sockaddr_in强转为通用地址结构sockaddr
+        int fd = accept(listenFd_, (struct sockaddr*)&addr, &len);
+        if(fd <= 0) {
+            return;     // accept失败
+        }
+        // 连接数检查
+        else if(HttpConn::userCount >= MAX_FD) {
+            SendError_(fd, "Server busy!");
+            LOG_WARN("Client is full!");
+            return;
+        }
+        AddClient_(fd, addr);
+    } while(listenEvent_ & EPOLLET);    // ET模式循环接收
+}
+
+// 注册新客户端：将新连接的套接字加入epoll监控，设置非阻塞模式，并添加超时管理定时器。
+void WebServer::AddClient_(int fd, sockaddr_in addr) {
+    assert(fd > 0);
+    users_[fd].init(fd, addr);
+    if(timeoutMS_ > 0) {
+        // 在 timeoutMS_后，调用当前WebServer对象的 CloseConn_方法，并传入 &users_[fd]作为参数，作为回调函数
+        timer_->add(fd, timeoutMS_, std::bind(&WebServer::CloseConn_, this, &users_[fd]));
+    }
+    epoller_->AddFd(fd, EPOLLIN | connEvent_);
+    SetFdNonblock(fd);
+    LOG_INFO("Client[%d] in!", users_[fd].GetFd());
+}
+
+// 向客户端发送错误信息并立即关闭连接
+void WebServer::SendError_(int fd, const char* info) {
+    assert(fd > 0);
+    int ret = send(fd, info, strlen(info), 0);  // 发送失败<0； 0：默认阻塞发送
+    if(ret < 0) {
+        LOG_WARN("send error to client[%d] error!", fd);
+    }
+    close(fd);
+}
+
+void WebServer::CloseConn_(HttpConn* client) {
+    assert(client);
+    LOG_INFO("Clinet[%d] quit", client->GetFd());
+    epoller_->DelFd(client->GetFd());
+    client->Close();
+}
+
+
+/*事件处理分发*/
+// I/O事件分发：将读/写任务作为异步任务添加到线程池的工作队列中
+void WebServer::DealRead_(HttpConn* client) {
+    assert(client);
+    ExtentTime_(client);
+    threadpool_->AddTask(std::bind(&WebServer::OnRead_, this, client));
+}
+void WebServer::DealWrite_(HttpConn* client) {
+    assert(client);
+    ExtentTime_(client);
+    threadpool_->AddTask(std::bind(&WebServer::OnWrite_, this, client));
+}
+
+// I/O实际处理：在工作线程中执行HTTP请求的读取或响应数据的发送
+void WebServer::OnRead_(HttpConn* client) {
+    assert(client);
+    int ret = -1;
+    int readErrno = 0;
+    ret = client->read(&readErrno);     // 返回的是读取的长度
+    // 读取失败    EAGAIN：非阻塞模式下的正常状态​​：发送缓冲区已满，下次再试
+    if(ret <= 0 && readErrno != EAGAIN) {
+        CloseConn_(client);
+        return;
+    }
+    OnProcess_(client);
+}
+void WebServer::OnWrite_(HttpConn* client) {
+    assert(client);
+    int ret = -1;
+    int writeErrno = 0;
+    ret = client->write(&writeErrno);
+    // 传输完成
+    if(client->ToWriteBytes() == 0) {
+        // 如果是持续连接就继续处理下个请求
+        if(client->IsKeepAlive()) {
+            OnProcess_(client);     
+            return;
+        }
+    }
+    // 发送失败
+    else if(ret < 0) {
+        // 发送缓冲区满了，此时需要重新注册EPOLLOUT(ET模式下的特殊处理，否则无法发送数据)
+        if(writeErrno == EAGAIN) {
+            epoller_->ModFd(client->GetFd(), connEvent_ | EPOLLOUT);
+        }
+    }
+    CloseConn_(client);
+}
+
+// 解析HTTP请求并生成响应
+void WebServer::OnProcess_(HttpConn* client) {
+    // true：生成完整HTTP响应 ——> 需要注册EPOLLOUT准备发送
+    if(client->process()) {
+        epoller_->ModFd(client->GetFd(), connEvent_ | EPOLLOUT);
+    } 
+    // false：请求不完整/解析失败 ——> 保持EPOLLIN继续接收数据
+    else {
+        epoller_->ModFd(client->GetFd(), connEvent_ | EPOLLIN);
+    }
+}
+
+
+void WebServer::ExtentTime_(HttpConn* client) {
+    assert(client);
+    if(timeoutMS_ > 0) {
+        timer_->adjust(client->GetFd(), timeoutMS_);
+    }
+}
 
 // 将文件描述符设置为非阻塞模式,read()/write()等系统调用在无法立即完成时返回 EAGAIN而非阻塞
 int WebServer::SetFdNonblock(int fd) {

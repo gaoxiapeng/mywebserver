@@ -14,8 +14,8 @@
 // typedef：为现有数据类型创建别名
 typedef std::function<void()> TimeoutCallBack;     // 回调函数类型
 typedef std::chrono::high_resolution_clock Clock;  // 返回按秒为单位的时间戳
-typedef std::chrono::milliseconds MS;              // 毫秒时间单位
 typedef Clock::time_point TimeStamp;               // 时间点类型，表示任务的过期时间
+typedef std::chrono::milliseconds MS;              // 毫秒时间单位
 
 // 一个需要定时触发的任务
 struct TimerNode {
@@ -51,7 +51,7 @@ public:
     int GetNextTick();
 
 private:
-    std::vector<TimerNode> heap_;               // 存储定时任务的小根堆
+    std::vector<TimerNode> heap_;               // 存储定时任务的小根堆，按时间排序的优先级队列
     std::unordered_map<int, size_t> ref_;       // 记录任务id到索引的映射
 
     void del_(size_t i);                        // 删除指定节点
